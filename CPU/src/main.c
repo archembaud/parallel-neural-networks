@@ -9,7 +9,7 @@
 #define NO_LAYERS 3
 #define NO_NEURONS 12
 #define NO_WEIGHTS 35
-#define NO_EPOCHS 1000
+#define NO_EPOCHS 400
 
 // Data
 float *data_input;
@@ -55,7 +55,7 @@ float neuron_forward_recieve_weight[NO_WEIGHTS];
 // Let's save some advanced results for graphing and analysis
 float *weight_history;
 float *bias_history;
-
+float *accuracy_history;
 
 float Activation_Function(float input) {
     // Use the sigmoid function
@@ -101,6 +101,9 @@ void Train_Network() {
     pBiasFile = fopen("Bias.txt", "w");
     FILE *pWeightFile;
     pWeightFile = fopen("Weights.txt", "w");
+    FILE *pAccuracyFile;
+    pAccuracyFile = fopen("Accuracy.txt", "w");
+
     for (int epoch = 0; epoch < NO_EPOCHS; epoch++) {
         // Train our AI using all of the samples
         int no_successful_predictions = 0;
@@ -117,7 +120,7 @@ void Train_Network() {
         }
         // Show training progress
         printf("Epoch %d of %d - accuracy = %g\n", epoch, NO_EPOCHS, (float)no_successful_predictions/NO_SAMPLES);
-
+        fprintf(pAccuracyFile, "%d\t%g\n", epoch, (float)no_successful_predictions/NO_SAMPLES);
         // Now I want to record the weights and the bias values
         for (int i = 0; i < NO_NEURONS; i++) {
             bias_history[epoch*NO_NEURONS + i] = neuron_bias[i];
@@ -129,7 +132,8 @@ void Train_Network() {
         }
     }
     fclose(pBiasFile);
-    fclose(pWeightFile);    
+    fclose(pWeightFile); 
+    fclose(pAccuracyFile);   
 }
 
 void Train_Network_using_single_sample(float *input, float *output, float *computed_output, float learning_rate) {
@@ -264,8 +268,10 @@ void Run_Network(float *input, float *computed_output) {
 void Allocate_Memory() {
     data_input = (float*)malloc(sizeof(float) * NO_SAMPLES * 4);
     data_class = (float*)malloc(sizeof(float) * NO_SAMPLES * 3);
+    // This data is allocated for in-execution analysis, which is currently lacking
     weight_history = (float*)malloc(sizeof(float)*NO_WEIGHTS*NO_EPOCHS);
     bias_history = (float*)malloc(sizeof(float)*NO_NEURONS*NO_EPOCHS);
+    accuracy_history = (float*)malloc(sizeof(float)*NO_EPOCHS);
 }
 
 

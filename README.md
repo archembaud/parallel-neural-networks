@@ -7,6 +7,10 @@ This repository contains a collection of neural network codes used for the purpo
 
 This is work in progress, and probably always will be, owing to the nature of research.
 
+## Contents
+
+* [CPU](./CPU/README.md): The prototype solver, designed to be simple and introduce students to neural networks.
+
 ## Prerequisites
 
 * GCC is the compiler used in the various makefiles in the repo.
