@@ -62,10 +62,11 @@ __device__ void Run_Network(int thread_id, float *neuron_delta, float *neuron_in
     }
 }
 
-__global__ void Train_Network_GPU(float *neuron_delta, float *neuron_input, float *neuron_output, float *neuron_bias,
+__global__ void Train_Network_GPU(float learning_rate, float *neuron_delta, float *neuron_input, float *neuron_output, float *neuron_bias,
                             short *layer_start, short *layer_neuron_type, short *neuron_forward_recieve_id,
                             short *neuron_forward_receive_start, float *neuron_forward_recieve_weight,
-                            float *input, short NO_INPUTS, short NO_NEURONS, short NO_LAYERS, int NO_SAMPLES) {
+                            float *input, float *output, short NO_INPUTS, short NO_OUTPUTS, short NO_NEURONS, short NO_LAYERS, int NO_SAMPLES) {
+
 
     int thread_id = blockDim.x*blockIdx.x + threadIdx.x;
 
@@ -74,13 +75,90 @@ __global__ void Train_Network_GPU(float *neuron_delta, float *neuron_input, floa
                     layer_start, layer_neuron_type, neuron_forward_recieve_id,
                     neuron_forward_receive_start, neuron_forward_recieve_weight,
                     input, NO_INPUTS, NO_NEURONS, NO_LAYERS, NO_SAMPLES);
+
+        int neuron_index_start = thread_id*NO_NEURONS;
+        int sample_class_start = thread_id*NO_OUTPUTS;
+        // Perform backward propagation and computation of deltas
+        // Now we need to run it backwards (backwards propagation)
+        // Start by computing the deltas at the output layer.
+        // So our outer loop is run in reverse
+        for (int layer = (NO_LAYERS-1); layer >= 0; layer--) {
+            for (int layer_neuron = 0; layer_neuron < (layer_start[layer+1] - layer_start[layer]); layer_neuron++) {
+                int neuron_id = layer_start[layer] + layer_neuron;
+                if (layer_neuron_type[layer] == 2) {
+                    // Sigmoid Activation approach
+                    neuron_delta[neuron_index_start+neuron_id] = (output[sample_class_start+layer_neuron] - neuron_output[neuron_index_start+neuron_id])
+                    *neuron_output[neuron_index_start+neuron_id]*(1.0 - neuron_output[neuron_index_start+neuron_id]);
+
+                    // Now while we are here, propagate the deltas through to the source neurons
+                    int no_sources = neuron_forward_receive_start[neuron_id+1] - neuron_forward_receive_start[neuron_id];
+                    for (int source = 0; source < no_sources; source++) {
+                        int source_id = neuron_forward_recieve_id[neuron_forward_receive_start[neuron_id] + source];
+                        // Update the delta of that source - can parallelize this loop
+                        float sigma_dash = neuron_output[neuron_index_start+neuron_id]*(1.0 - neuron_output[neuron_index_start+neuron_id]);
+                        int weight_index = neuron_forward_receive_start[neuron_id] + source;
+                        neuron_delta[neuron_index_start+source_id] += neuron_delta[neuron_index_start+neuron_id]*neuron_forward_recieve_weight[neuron_forward_receive_start[neuron_id] + source]*sigma_dash;
+                    }
+                } else {
+                    // Hidden and input layers
+                    int neuron_id = layer_start[layer] + layer_neuron;
+                    // We need to propagate the delta back to sources
+                    int no_sources = neuron_forward_receive_start[neuron_id+1] - neuron_forward_receive_start[neuron_id];
+                    for (int source = 0; source < no_sources; source++) {
+                        int source_id = neuron_forward_recieve_id[neuron_forward_receive_start[neuron_id] + source];
+                        int weight_index = neuron_forward_receive_start[neuron_id] + source;
+                        float sigma_dash = neuron_output[neuron_index_start+neuron_id]*(1.0 - neuron_output[neuron_index_start+neuron_id]);
+                        float d_delta = neuron_delta[neuron_index_start+neuron_id]*neuron_forward_recieve_weight[neuron_forward_receive_start[neuron_id] + source]*sigma_dash;
+                        neuron_delta[neuron_index_start+source_id] += d_delta;
+                    }
+                }
+            }
+        }
+
+        // Now we can run forward and update weights and bias values
+        for (int layer = 0; layer < NO_LAYERS; layer++) {
+            for (int layer_neuron = 0; layer_neuron < (layer_start[layer+1] - layer_start[layer]); layer_neuron++) {
+                int neuron_id = layer_start[layer] + layer_neuron;
+                int no_sources = neuron_forward_receive_start[neuron_id+1] - neuron_forward_receive_start[neuron_id];
+                if (no_sources == 0) {
+                    // This is an input layer.
+                    neuron_bias[neuron_id] = 0.0; // Not really required
+                } else {
+                    float sigma_dash = neuron_output[neuron_index_start+neuron_id]*(1.0 - neuron_output[neuron_index_start+neuron_id]);
+                    float change_in_bias = learning_rate * neuron_delta[neuron_index_start+neuron_id] * sigma_dash;
+
+                    // Atomic Write 
+                    // neuron_bias[neuron_id] += change_in_bias;
+                    // float new_bias = neuron_bias[neuron_id] + change_in_bias;
+                    //atomicExch(&neuron_bias[neuron_id], new_bias);
+
+                    atomicAdd(&neuron_bias[neuron_id], change_in_bias);
+
+                    // We are in an output layer, which means we are updating the weights between here and the middle layer
+                    for (int source = 0; source < no_sources; source++) {
+                        int source_id = neuron_forward_recieve_id[neuron_forward_receive_start[neuron_id] + source];
+                        int weight_index = neuron_forward_receive_start[neuron_id] + source;
+                        float weight_change = learning_rate*neuron_delta[neuron_index_start+neuron_id]*sigma_dash*neuron_output[neuron_index_start+source_id];
+                        
+                        // Atomic write
+                        // float new_weight = neuron_forward_recieve_weight[weight_index] + weight_change;
+                        //neuron_forward_recieve_weight[weight_index] += weight_change;
+                        //atomicExch(&neuron_forward_recieve_weight[weight_index] , new_weight);
+                        atomicAdd(&neuron_forward_recieve_weight[weight_index], weight_change);
+                    }
+                }
+            }
+        } 
     }
 } 
 
 
 void Get_From_Device(float **h_neuron_input, float **d_neuron_input,
                      float **h_neuron_output, float **d_neuron_output,
-                     int NO_SAMPLES, short NO_NEURONS) {
+                     float **h_neuron_delta, float **d_neuron_delta,
+                     float **h_neuron_bias, float **d_neuron_bias, 
+                     float **h_neuron_forward_recieve_weight, float **d_neuron_forward_recieve_weight,
+                     int NO_SAMPLES, short NO_NEURONS, short NO_WEIGHTS) {
     
     cudaError_t Error;
     size_t size = NO_NEURONS*NO_SAMPLES*sizeof(float);
@@ -90,6 +168,16 @@ void Get_From_Device(float **h_neuron_input, float **d_neuron_input,
     Error = cudaMemcpy(*h_neuron_output, *d_neuron_output, size, cudaMemcpyDeviceToHost); 
     printf("CUDA error (memcpy d_neuron_output -> h_neuron_output) = %s\n", cudaGetErrorString(Error));
 
+    Error = cudaMemcpy(*h_neuron_delta, *d_neuron_delta, size, cudaMemcpyDeviceToHost); 
+    printf("CUDA error (memcpy d_neuron_delta -> h_neuron_delta) = %s\n", cudaGetErrorString(Error));
+
+    size = NO_NEURONS*sizeof(float);
+    Error = cudaMemcpy(*h_neuron_bias, *d_neuron_bias, size, cudaMemcpyDeviceToHost); 
+    printf("CUDA error (memcpy d_neuron_bias -> h_neuron_bias) = %s\n", cudaGetErrorString(Error));
+
+    size = NO_WEIGHTS*sizeof(float);
+    Error = cudaMemcpy(*h_neuron_forward_recieve_weight, *d_neuron_forward_recieve_weight, size, cudaMemcpyDeviceToHost); 
+    printf("CUDA error (memcpy d_neuron_forward_recieve_weight -> h_neuron_forward_recieve_weight) = %s\n", cudaGetErrorString(Error));    
 }
 
 
@@ -354,7 +442,6 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
     float *d_training_data, *d_training_classification;
 
     Prepare_Network_Size(network, &no_layers, &no_weights, &no_neurons);
-
     short no_outputs = network[no_layers-1];
 
     printf("Idenfified %d layers, %d neurons and %d weights with %d inputs and %d outputs\n", no_layers, no_neurons, no_weights, no_inputs, no_outputs);
@@ -376,8 +463,6 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
                              h_neuron_forward_receive_start, h_neuron_forward_recieve_id, 
                              h_neuron_bias, h_neuron_forward_recieve_weight,
                              no_layers, no_neurons);
-    printf("Training network\n");
-
 
     // Send things to the GPU
     Send_To_Device(&h_neuron_bias,  &d_neuron_bias,
@@ -396,19 +481,26 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
         // Employ Data Parallelism
         // Each thread will train (using forward and backward propagation) one sample
 
+        cudaMemset(d_neuron_delta, 0, sizeof(NO_SAMPLES*no_neurons));
+        cudaMemset(d_neuron_input, 0, sizeof(NO_SAMPLES*no_neurons));
+        cudaMemset(d_neuron_output, 0, sizeof(NO_SAMPLES*no_neurons));
+    
         int threads_per_block = 32;
         int no_blocks = (NO_SAMPLES + threads_per_block - 1)/threads_per_block;
-        Train_Network_GPU<<<no_blocks, threads_per_block>>>(d_neuron_delta, d_neuron_input, d_neuron_output, d_neuron_bias,
+        Train_Network_GPU<<<no_blocks, threads_per_block>>>(learning_rate, d_neuron_delta, d_neuron_input, d_neuron_output, d_neuron_bias,
                             d_layer_start, d_layer_neuron_type, d_neuron_forward_recieve_id,
                             d_neuron_forward_receive_start, d_neuron_forward_recieve_weight,
-                            d_training_data, no_inputs, no_neurons, no_layers, NO_SAMPLES);
+                            d_training_data, d_training_classification, no_inputs, no_outputs, no_neurons, no_layers, NO_SAMPLES);
 
     }
 
     // Fetch the results from the GPU
     Get_From_Device(&h_neuron_input, &d_neuron_input,
                     &h_neuron_output, &d_neuron_output,
-                    NO_SAMPLES, no_neurons);
+                    &h_neuron_delta, &d_neuron_delta,
+                    &h_neuron_bias, &d_neuron_bias,
+                    &h_neuron_forward_recieve_weight, &d_neuron_forward_recieve_weight,
+                    NO_SAMPLES, no_neurons, no_weights);
     
     // Iterate over data for debugging
     for (int sample = 0; sample < NO_SAMPLES; sample++) {
@@ -435,8 +527,19 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
         for (int i = 0; i < no_neurons; i++) {
             printf("%g, ", h_neuron_output[neuron_index+i]);
         }
+        printf("\nNeuron Deltas: ");
+        for (int i = 0; i < no_neurons; i++) {
+            printf("%g, ", h_neuron_delta[neuron_index+i]);
+        }
+        printf("\nNeuron Bias: ");
+        for (int i = 0; i < no_neurons; i++) {
+            printf("%g, ", h_neuron_bias[i]);
+        }
+        printf("\nWeights: ");
+        for (int i = 0; i < no_weights; i++) {
+            printf("%g ", h_neuron_forward_recieve_weight[i]);
+        }
         printf("\n");
-
     }
 
 
