@@ -416,10 +416,7 @@ void Prepare_Network_Structure(short *layer_start, short *layer_neuron_type, sho
     for (int i = 0; i < weight_count; i++) {
         neuron_forward_recieve_weight[i] = (float)rand()/RAND_MAX;
     }
-
 }  
-
-
 
 
 
@@ -477,7 +474,7 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
 
     // 
 
-    for (int epoch = 0; epoch < 1; epoch++) {
+    for (int epoch = 0; epoch < NO_EPOCHS; epoch++) {
         // Employ Data Parallelism
         // Each thread will train (using forward and backward propagation) one sample
 
@@ -531,16 +528,20 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
         for (int i = 0; i < no_neurons; i++) {
             printf("%g, ", h_neuron_delta[neuron_index+i]);
         }
-        printf("\nNeuron Bias: ");
-        for (int i = 0; i < no_neurons; i++) {
-            printf("%g, ", h_neuron_bias[i]);
-        }
-        printf("\nWeights: ");
-        for (int i = 0; i < no_weights; i++) {
-            printf("%g ", h_neuron_forward_recieve_weight[i]);
-        }
         printf("\n");
     }
+
+    // Final values, print to screen for debugging
+    printf("=======================================\n");
+    printf("\nNeuron Bias: ");
+    for (int i = 0; i < no_neurons; i++) {
+        printf("%g, ", h_neuron_bias[i]);
+    }
+    printf("\nWeights: ");
+    for (int i = 0; i < no_weights; i++) {
+        printf("%g ", h_neuron_forward_recieve_weight[i]);
+    }
+    printf("\n");
 
 
     Free_Memory(&h_neuron_bias,  &d_neuron_bias,
