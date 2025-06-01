@@ -1,10 +1,97 @@
 #include <stdio.h>
 #include "gpu_nn.h"
 
-/*
-Allocate the memory required by the GPU solver.
-Does not handle memory allocation for the data we load in.
-*/
+__device__ float Activation_Function(float input) {
+    // Use the sigmoid function
+    return (1.0/(1.0 + expf(-input)));
+}
+
+
+// Each thread will run the network forward for one sample. (Thread_ID -> Sample ID)
+// 150 Samples in this case, so 150 threads here.
+__device__ void Run_Network(int thread_id, float *neuron_delta, float *neuron_input, float *neuron_output, float *neuron_bias,
+                            short *layer_start, short *layer_neuron_type, short *neuron_forward_recieve_id,
+                            short *neuron_forward_receive_start, float *neuron_forward_recieve_weight,
+                            float *input, short NO_INPUTS, short NO_NEURONS, short NO_LAYERS, int NO_SAMPLES) {
+
+    // Identify the starting point for neuron information
+    int neuron_index_start = thread_id*NO_NEURONS;
+
+    // Find the sample information we are looking for
+    int sample_data_start = thread_id*NO_INPUTS;
+
+    for (int i = 0; i < NO_NEURONS; i++) {
+        neuron_delta[neuron_index_start+i] = 0.0;
+        neuron_input[neuron_index_start+i] = 0.0;
+        neuron_output[neuron_index_start+i] = 0.0;
+    }
+
+    // Moving forward
+    for (int layer = 0; layer < NO_LAYERS; layer++) {
+        // Now, process the neurons in each layer
+        for (int layer_neuron = 0; layer_neuron < (layer_start[layer+1] - layer_start[layer]); layer_neuron++) {
+            int neuron_id = layer_start[layer] + layer_neuron;
+            // For each neuron, we need to iterate over its sources
+            // If there are no sources, check to see if this is an input
+            int no_sources = neuron_forward_receive_start[neuron_id+1] - neuron_forward_receive_start[neuron_id];
+            if (no_sources == 0) {
+                // Probably an input. Double check anyway.
+                if (layer_neuron_type[layer] == 0) {
+                    // This is an input.
+                    // Handle the input.
+                    neuron_input[neuron_index_start + neuron_id] = input[sample_data_start + layer_neuron];
+                    // Also, we won't put a bias on neurons in the input layer
+                    neuron_output[neuron_index_start + neuron_id] = neuron_input[neuron_index_start + neuron_id];
+                }
+            } else {
+                // We have a middle layer, or an output layer.
+                float neuron_input_sum = 0.0;
+                for (int source = 0; source < no_sources; source++) {
+                    int source_id = neuron_forward_recieve_id[neuron_forward_receive_start[neuron_id] + source];
+                    // Weights are stored in the same structure as the source node
+                    neuron_input_sum += neuron_output[neuron_index_start + source_id]*neuron_forward_recieve_weight[neuron_forward_receive_start[neuron_id] + source];
+                }
+                // Set the input (for record keeping) then set the output
+                neuron_input[neuron_index_start + neuron_id] = neuron_input_sum;
+                // Add a bias
+                neuron_input[neuron_index_start + neuron_id] += neuron_bias[neuron_id];
+                // Apply an activation function and compute an output
+                neuron_output[neuron_index_start + neuron_id] = Activation_Function(neuron_input_sum);
+            }            
+        }
+    }
+}
+
+__global__ void Train_Network_GPU(float *neuron_delta, float *neuron_input, float *neuron_output, float *neuron_bias,
+                            short *layer_start, short *layer_neuron_type, short *neuron_forward_recieve_id,
+                            short *neuron_forward_receive_start, float *neuron_forward_recieve_weight,
+                            float *input, short NO_INPUTS, short NO_NEURONS, short NO_LAYERS, int NO_SAMPLES) {
+
+    int thread_id = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (thread_id < NO_SAMPLES) {
+        Run_Network(thread_id, neuron_delta, neuron_input, neuron_output, neuron_bias,
+                    layer_start, layer_neuron_type, neuron_forward_recieve_id,
+                    neuron_forward_receive_start, neuron_forward_recieve_weight,
+                    input, NO_INPUTS, NO_NEURONS, NO_LAYERS, NO_SAMPLES);
+    }
+} 
+
+
+void Get_From_Device(float **h_neuron_input, float **d_neuron_input,
+                     float **h_neuron_output, float **d_neuron_output,
+                     int NO_SAMPLES, short NO_NEURONS) {
+    
+    cudaError_t Error;
+    size_t size = NO_NEURONS*NO_SAMPLES*sizeof(float);
+    Error = cudaMemcpy(*h_neuron_input, *d_neuron_input, size, cudaMemcpyDeviceToHost); 
+    printf("CUDA error (memcpy d_neuron_input -> h_neuron_input) = %s\n", cudaGetErrorString(Error));
+
+    Error = cudaMemcpy(*h_neuron_output, *d_neuron_output, size, cudaMemcpyDeviceToHost); 
+    printf("CUDA error (memcpy d_neuron_output -> h_neuron_output) = %s\n", cudaGetErrorString(Error));
+
+}
+
 
 void Send_To_Device(float **h_neuron_bias,  float **d_neuron_bias,
                      short **h_neuron_forward_recieve_id, short **d_neuron_forward_recieve_id,
@@ -68,17 +155,21 @@ void Allocate_Memory(float **h_neuron_bias,  float **d_neuron_bias,
                      short **h_layer_neuron_type, short **d_layer_neuron_type,
                      float **d_training_data, size_t training_data_size,
                      float **d_training_classification, size_t training_class_size,
-                     int NO_NEURONS, int NO_WEIGHTS, int NO_LAYERS) {
+                     int NO_NEURONS, int NO_WEIGHTS, int NO_LAYERS, int NO_SAMPLES) {
+
+    cudaError_t Error;
 
     size_t size = NO_NEURONS*sizeof(float);
     *h_neuron_bias = (float*)malloc(size);
+
+    Error = cudaMalloc((void**)d_neuron_bias, size); 
+    printf("CUDA error (malloc d_neuron_bias) = %s\n", cudaGetErrorString(Error));
+
+    size = NO_NEURONS*NO_SAMPLES*sizeof(float);
     *h_neuron_input = (float*)malloc(size);
     *h_neuron_output = (float*)malloc(size);
     *h_neuron_delta = (float*)malloc(size);
 
-    cudaError_t Error;
-    Error = cudaMalloc((void**)d_neuron_bias, size); 
-    printf("CUDA error (malloc d_neuron_bias) = %s\n", cudaGetErrorString(Error));
     Error = cudaMalloc((void**)d_neuron_input, size); 
     printf("CUDA error (malloc d_neuron_input) = %s\n", cudaGetErrorString(Error));
     Error = cudaMalloc((void**)d_neuron_output, size); 
@@ -152,7 +243,8 @@ void Free_Memory(float **h_neuron_bias,  float **d_neuron_bias,
     if (*d_layer_start) cudaFree(*d_layer_start);
     if (*d_layer_neuron_type) cudaFree(*d_layer_neuron_type);
     if (*d_training_data) cudaFree(*d_training_data);
-    if (*d_training_classification) cudaFree(*d_training_classification);    
+    if (*d_training_classification) cudaFree(*d_training_classification);
+
 }
 
 
@@ -161,6 +253,7 @@ void Prepare_Network_Size(short *network_layout, short *no_layers, short *no_wei
     *no_weights = 0;
     *no_neurons = 0;
     printf("No. of layers = %d\n", *no_layers);
+    
     for (short layer = 0; layer < *no_layers; layer++) {
         printf("Found %d neurons in layer %d\n", network_layout[layer], layer);
         *no_neurons = *no_neurons + network_layout[layer];
@@ -255,12 +348,16 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
     short *h_layer_start, *d_layer_start;
     short no_weights, no_layers, no_neurons;
 
+    short no_inputs = network[0];
+
     // Prepare memory for the training data and classification
     float *d_training_data, *d_training_classification;
 
     Prepare_Network_Size(network, &no_layers, &no_weights, &no_neurons);
 
-    printf("Idenfified %d layers, %d neurons and %d weights\n", no_layers, no_neurons, no_weights);
+    short no_outputs = network[no_layers-1];
+
+    printf("Idenfified %d layers, %d neurons and %d weights with %d inputs and %d outputs\n", no_layers, no_neurons, no_weights, no_inputs, no_outputs);
 
     Allocate_Memory(&h_neuron_bias,  &d_neuron_bias,
                      &h_neuron_input, &d_neuron_input,
@@ -273,7 +370,7 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
                      &h_layer_neuron_type, &d_layer_neuron_type,
                      &d_training_data, training_data_size,
                      &d_training_classification, training_class_size,
-                     no_neurons, no_weights, no_layers);
+                     no_neurons, no_weights, no_layers, NO_SAMPLES);
 
     Prepare_Network_Structure(h_layer_start, h_layer_neuron_type, network,
                              h_neuron_forward_receive_start, h_neuron_forward_recieve_id, 
@@ -295,17 +392,52 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
 
     // 
 
-    for (int epoch = 0; epoch < NO_EPOCHS; epoch++) {
+    for (int epoch = 0; epoch < 1; epoch++) {
         // Employ Data Parallelism
         // Each thread will train (using forward and backward propagation) one sample
 
         int threads_per_block = 32;
-        int no_blocks = NO_SAMPLES/threads_per_block;
-
+        int no_blocks = (NO_SAMPLES + threads_per_block - 1)/threads_per_block;
+        Train_Network_GPU<<<no_blocks, threads_per_block>>>(d_neuron_delta, d_neuron_input, d_neuron_output, d_neuron_bias,
+                            d_layer_start, d_layer_neuron_type, d_neuron_forward_recieve_id,
+                            d_neuron_forward_receive_start, d_neuron_forward_recieve_weight,
+                            d_training_data, no_inputs, no_neurons, no_layers, NO_SAMPLES);
 
     }
 
+    // Fetch the results from the GPU
+    Get_From_Device(&h_neuron_input, &d_neuron_input,
+                    &h_neuron_output, &d_neuron_output,
+                    NO_SAMPLES, no_neurons);
+    
+    // Iterate over data for debugging
+    for (int sample = 0; sample < NO_SAMPLES; sample++) {
+        printf("------- SAMPLE %d ---------\n", sample);
+        printf("Checking input:");
+        int sample_data_start = sample*no_inputs;
+        for (int i = 0; i < no_inputs; i++) {
+            printf("%g ", h_training_data[sample_data_start+i]);
+        }
+        printf("\nChecking Outputs: ");
+        // Now fetch the outputs
+        sample_data_start = sample*no_outputs;
+        for (int i = 0; i < no_outputs; i++) {
+            printf("%g ", h_training_classification[sample_data_start+i]);
+        }
+        printf("\nNeuron Inputs: ");
+        // Check the computed outputs
+        int neuron_index = sample*no_neurons;
+        for (int i = 0; i < no_neurons; i++) {
+            printf("%g, ", h_neuron_input[neuron_index+i]);
+        }
+        printf("\nNeuron Outputs: ");
+        // Check the computed outputs
+        for (int i = 0; i < no_neurons; i++) {
+            printf("%g, ", h_neuron_output[neuron_index+i]);
+        }
+        printf("\n");
 
+    }
 
 
     Free_Memory(&h_neuron_bias,  &d_neuron_bias,

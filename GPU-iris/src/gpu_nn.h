@@ -9,7 +9,7 @@ void Allocate_Memory(float **h_neuron_bias,  float **d_neuron_bias,
                      short **h_layer_neuron_type, short **d_layer_neuron_type,
                      float **d_training_data, size_t training_data_size,
                      float **d_training_classification, size_t training_class_size,
-                     int NO_NEURONS, int NO_WEIGHTS, int NO_LAYERS);
+                     int NO_NEURONS, int NO_WEIGHTS, int NO_LAYERS, int NO_SAMPLES);
 
 void Free_Memory(float **h_neuron_bias,  float **d_neuron_bias,
                      float **h_neuron_input, float **d_neuron_input,
