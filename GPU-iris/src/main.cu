@@ -51,7 +51,8 @@ void load_data() {
 
 int main() {
     // Define out network - 4 input neurons, 5 neurons in a hidden layer, 3 output neurons 
-    short network[] = {4, 5, 3};
+    // -1 marks the end of the network
+    short network[] = {4, 5, 3, -1};
 
     // Load data, store in data_input and data_class
     load_data();
