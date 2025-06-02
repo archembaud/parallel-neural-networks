@@ -337,28 +337,28 @@ void Free_Memory(float **h_neuron_bias,  float **d_neuron_bias,
 
 
 void Prepare_Network_Size(short *network_layout, short *no_layers, short *no_weights, short *no_neurons) {
-    *no_layers = sizeof(network_layout) / sizeof(network_layout[0])-1;
     *no_weights = 0;
     *no_neurons = 0;
-    printf("No. of layers = %d\n", *no_layers);
-    
+    short layer_neurons = 1;
+    short layer_count = 0; 
+    while (layer_neurons > 0) {
+        layer_neurons = network_layout[layer_count];
+        layer_count++;
+    }
+    *no_layers = layer_count-1;  
     for (short layer = 0; layer < *no_layers; layer++) {
-        printf("Found %d neurons in layer %d\n", network_layout[layer], layer);
         *no_neurons = *no_neurons + network_layout[layer];
     }
     // Compute the number of weights
     for (short layer = 1; layer < *no_layers; layer++) {
         *no_weights += network_layout[layer]*network_layout[layer-1];
     }
-
-    printf("Found a total number of %d neurons\n", *no_neurons);
-    printf("Found a total number of %d weights\n", *no_weights);
 }
 
 void Prepare_Network_Structure(short *layer_start, short *layer_neuron_type, short *network_layout, 
                                short *neuron_forward_receive_start, short *neuron_forward_recieve_id,
                                float *neuron_bias, float *neuron_forward_recieve_weight,
-                               short no_layers, short no_neurons) {
+                               short no_layers, short no_neurons, short no_weights) {
 
     // The first layer is an input layer (type 0)    
     layer_neuron_type[0] = 0;
@@ -377,10 +377,6 @@ void Prepare_Network_Structure(short *layer_start, short *layer_neuron_type, sho
     }
 
     // Build up the network now
-    // short layer_start[NO_LAYERS+1] = {0, 4, 9, 12};
-    // short layer_neuron_type[NO_LAYERS] = {0, 1, 2}; // 0 = input, 1 = hidden, 2 = output
-    // short neuron_forward_recieve_id[] =    {0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 8, 4, 5, 6, 7, 8, 4, 5, 6, 7, 8};
-    // short neuron_forward_receive_start[] = {0, 0, 0, 0, 0, 4, 8, 12, 16, 20, 25, 30, 35};
     neuron_forward_receive_start[0] = 0;
     short cumulative_sum_neurons = 0;
     short cumulative_input_sum = 0;
@@ -404,7 +400,7 @@ void Prepare_Network_Structure(short *layer_start, short *layer_neuron_type, sho
             }
         }
         if (layer_neuron_type[layer] > 0) {
-            cumulative_sum_neurons += layer_start[layer]; // Keeps track of the id of the last neuron in the previous layer
+            cumulative_sum_neurons = layer_start[layer]; // Keeps track of the id of the last neuron in the previous layer
         }
     }
 
@@ -416,7 +412,7 @@ void Prepare_Network_Structure(short *layer_start, short *layer_neuron_type, sho
     for (int i = 0; i < weight_count; i++) {
         neuron_forward_recieve_weight[i] = (float)rand()/RAND_MAX;
     }
-}  
+}
 
 
 
@@ -459,7 +455,7 @@ void Train_Network(float *h_training_data, size_t training_data_size, float *h_t
     Prepare_Network_Structure(h_layer_start, h_layer_neuron_type, network,
                              h_neuron_forward_receive_start, h_neuron_forward_recieve_id, 
                              h_neuron_bias, h_neuron_forward_recieve_weight,
-                             no_layers, no_neurons);
+                             no_layers, no_neurons, no_weights);
 
     // Send things to the GPU
     Send_To_Device(&h_neuron_bias,  &d_neuron_bias,
