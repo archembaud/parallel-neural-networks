@@ -5,7 +5,7 @@
 #include "serial_nn.h"
 
 #define NO_SAMPLES 150
-#define NO_EPOCHS 400
+#define NO_EPOCHS 100
 #define LEARNING_RATE 0.1
 
 // Iris data set
