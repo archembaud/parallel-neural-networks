@@ -12,7 +12,7 @@ This is work in progress, and probably always will be, owing to the nature of re
 * [CPU-iris](./CPU-iris/README.md): The prototype solver, designed to be simple and introduce students to neural networks.
 
 * [GPU-iris](./GPU-iris/README.md): The prototype GPU solver, designed to be simple and introduce students to neural networks and the concept of data parallelism for a single GPU solver,
-* [CPU-GA-iris](./CPU-GA-iris/README.md): The modified CPU solver using a Differential Evolution Genetic Algoritm (DEGA) instead of the steepest descent method for updating values of weights and biases in the network.
+* [CPU-GA-iris](./CPU-GA-Iris/README.md): The modified CPU solver using a Differential Evolution Genetic Algoritm (DEGA) instead of the steepest descent method for updating values of weights and biases in the network.
 
 
 ## Prerequisites
